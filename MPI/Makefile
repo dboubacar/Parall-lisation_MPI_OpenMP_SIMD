@@ -4,6 +4,8 @@ EXEC= cg_seq
 OBJ= mmio.o cg.o
 LIB= -lm
 
+CMD_EXEC=mpirun -n 32 -hostfile hostfile --map-by node $(EXEC)
+
 all: $(OBJ)
 	$(CC) $(CFLAGS)  $(OBJ) -o $(EXEC) $(LIB)
 
