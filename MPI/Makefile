@@ -1,21 +1,20 @@
 CC= gcc
 CFLAGS= -O3 -Wall -Wextra -g
-EXEC= cg_seq
+EXEC= cg_mpi
 OBJ= mmio.o cg.o
 LIB= -lm
-
-CMD_EXEC=mpirun -n 32 -hostfile hostfile --map-by node $(EXEC)
+MPI_C = mpicc
 
 all: $(OBJ)
-	$(CC) $(CFLAGS)  $(OBJ) -o $(EXEC) $(LIB)
+	$(MPI_C) $(CFLAGS)  $(OBJ) -o $(EXEC) $(LIB)
 
 
 cg.o: cg.c
-	$(CC) -c $(CFLAGS) $< $(LIB)
+	$(MPI_C) -c $(CFLAGS) $< $(LIB)
+
 
 mmio.o: mmio.c
-%.o: %.c
-	$(CC) -c $(CFLAGS) mmio.c cg.c $(LIB)
+	$(CC) -c $(CFLAGS) $< $(LIB)
 
 .PHONY: clean
 
