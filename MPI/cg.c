@@ -526,7 +526,7 @@ int main(int argc, char **argv)
 }
 	/* solve values == b */
 	struct csr_matrix_t *A_local = malloc(sizeof(*A_local));
-
+  /*distribute the matrix between the processes*/
 	distribMatrix(A,A_local,rank,nproc);
 
 	spmv_parallel(A,A_local,b,x,rank,nproc);
