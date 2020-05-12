@@ -367,10 +367,7 @@ void sp_gemv(const struct csr_matrix_t *A, const double *x, double *y)
 	}
 }
 
-
-
 /*************************** Vector operations ********************************/
-
 /* dot product */
 double dot(const int n, const double *x, const double *y)
 {
@@ -384,37 +381,36 @@ double dot(const int n, const double *x, const double *y)
 
 }
 
-
-
 /* euclidean norm (a.k.a 2-norm) */
 double norm(const int n, const double *x)
 {
 	return sqrt(dot(n, x, x));
 }
 
-
-
 /*********************** conjugate gradient algorithm *************************/
 
 /* Solve values == b (the solution is written in x). Scratch must be preallocated of size 6n */
-void cg_solve(const struct csr_matrix_t *A, const double *b, double *x,double *d, const double epsilon,int nrow,int rank)
+void cg_solve(const struct csr_matrix_t *A_local, const double *b_local, double *x, const double epsilon,int nrow,int rank)
 {
-	int n = A->n;
-	int nz = A->nz;
+	int n_local = A_local->n;
+	int nz_local = A_local->nz;
   if(rank==MASTER){
 		fprintf(stderr, "[CG] Starting iterative solver\n");
-		fprintf(stderr, "     ---> Working set : %.1fMbyte\n", 1e-6 * (12.0 * nz + 52.0 * n));
-		fprintf(stderr, "     ---> Per iteration: %.2g FLOP in sp_gemv() and %.2g FLOP in the rest\n", 2. * nz, 12. * n);
+		fprintf(stderr, "     ---> Working set : %.1fMbyte\n", 1e-6 * (12.0 * nz_local + 52.0 * n_local));
+		fprintf(stderr, "     ---> Per iteration: %.2g FLOP in sp_gemv() and %.2g FLOP in the rest\n_local", 2. * nz_local, 12. * n_local);
 	}
-	double *r = malloc(A->n * sizeof(double));	        // residue
-	double *z =malloc(A->n * sizeof(double));// scratch + n;	// preconditioned-residue
-	double *p =malloc(A->n * sizeof(double));// scratch + 2 * n;	// search direction
-	double *q = malloc(A->n * sizeof(double));//scratch + 3 * n;	// q == ptr
-	//double *d = scratch + 4 * n;	// diagonal entries of A (Jacobi preconditioning)
-	double *full_p = malloc(nrow * sizeof(double));
+	double *r_local = malloc(n_local * sizeof(double));	        // residue
+	double *z_local =malloc(n_local * sizeof(double));// scratch + n_local;	// preconditioned-residue
+	double *p_local =malloc(n_local * sizeof(double));// scratch + 2 * n_local;	// search direction
+	double *q = malloc(n_local * sizeof(double));//scratch + 3 * n_local;	// q == ptr
+	double *d_local = malloc(n_local * sizeof(double));	// diagonal entries of A_local (Jacobi preconditioning)
+	double *full_p = malloc(nrow * sizeof(double));//full vector
+	double *x_local = malloc(n_local * sizeof(double));//local solution
+
 
 	/* Isolate diagonal */
-//	===extract_diagonal(A, d);
+	extract_diagonal(A_local, d_local,rank);
+
 
 	/*
 	 * This function follows closely the pseudo-code given in the (english)
@@ -422,58 +418,55 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x,double *d
 	 * preconditionning.
 	 */
 
-	/* We use x == 0 --- this avoids the first matrix-vector product. */
-	for (int i = 0; i < n; i++)
-		x[i] = 0.0;
-	for (int i = 0; i < n; i++)	// r <-- b - values == b
-		r[i] = b[i];
-	for (int i = 0; i < n; i++)	// z <-- M^(-1).r
-		z[i] = r[i] / d[i];
-	for (int i = 0; i < n; i++)	// p <-- z
-		p[i] = z[i];
+	/* We use x_local == 0 --- this avoids the first matrix-vector product. */
+	for (int i = 0; i < n_local; i++)
+		x_local[i] = 0.0;
+	for (int i = 0; i < n_local; i++)	// r_local <-- b_local - values == b_local
+		r_local[i] = b_local[i];
+	for (int i = 0; i < n_local; i++)	// z_local <-- M^(-1).r_local
+		z_local[i] = r_local[i] / d_local[i];
+	for (int i = 0; i < n_local; i++)	// p_local <-- z_local
+		p_local[i] = z_local[i];
 
-	double rz = dot(n, r, z);
+	double rz = dot(n_local, r_local, z_local);
+
 	double start = wtime();
 	double last_display = start;
 	int iter = 0;
-	while (norm(n, r) > epsilon) {
-		/* loop invariant : rz = dot(r, z) */
+	while (norm(n_local, r_local) > epsilon) {
+		/* loop invariant : rz = dot(r_local, z_local) */
 		double old_rz = rz;
-
-		MPI_Allgather(p, n, MPI_DOUBLE, full_p, n, MPI_DOUBLE, MPI_COMM_WORLD);
-		printf("TESSSSSSSSSSSSSSSSSSST\n");
-
-		sp_gemv(A, full_p, q);	/* q <-- A.p */
-
-
-		double alpha = old_rz / dot(n, p, q);
-		for (int i = 0; i < n; i++)	// x <-- x + alpha*p
-			x[i] += alpha * p[i];
-		for (int i = 0; i < n; i++)	// r <-- r - alpha*q
-			r[i] -= alpha * q[i];
-		for (int i = 0; i < n; i++)	// z <-- M^(-1).r
-			z[i] = r[i] / d[i];
-		rz = dot(n, r, z);	// restore invariant
+		MPI_Allgather(p_local, n_local, MPI_DOUBLE, full_p, n_local, MPI_DOUBLE, MPI_COMM_WORLD);
+		sp_gemv(A_local, full_p, q);	/* q <-- A_local.p_local */
+		double alpha = old_rz / dot(n_local, p_local, q);
+		for (int i = 0; i < n_local; i++)	// x_local <-- x_local + alpha*p_local
+			x_local[i] += alpha * p_local[i];
+		for (int i = 0; i < n_local; i++)	// r_local <-- r_local - alpha*q
+			r_local[i] -= alpha * q[i];
+		for (int i = 0; i < n_local; i++)	// z_local <-- M^(-1).r_local
+			z_local[i] = r_local[i] / d_local[i];
+		rz = dot(n_local, r_local, z_local);	// restore invariant
 		double beta = rz / old_rz;
-		for (int i = 0; i < n; i++)	// p <-- z + beta*p   /* p = r + beta.p */
+		for (int i = 0; i < n_local; i++)	// p_local <-- z_local + beta*p_local   /* p_local = r_local + beta.p_local */
 
-			p[i] = z[i] + beta * p[i];
+			p_local[i] = z_local[i] + beta * p_local[i];
 		iter++;
 		if(rank==MASTER){
 			double t = wtime();
 			if (t - last_display > 0.5) {
 				/* verbosity */
 				double rate = iter / (t - start);	// iterations per s.
-				double GFLOPs = 1e-9 * rate * (2 * nz + 12 * n);
-				//fprintf(stderr, "\r     ---> error : %2.2e, iter : %d (%.1f it/s, %.2f GFLOPs)", norm(n, r), iter, rate, GFLOPs);
-				//fflush(stdout);
-				printf("SUIS DANS MASTER\n");
+				double GFLOPs = 1e-9 * rate * (2 * nz_local + 12 * n_local);
+				fprintf(stderr, "\r    MASTER-->iter : %d (%.1f it/s, %.2f GFLOPs)",iter, rate, GFLOPs);
+				fflush(stdout);
 				last_display = t;
 			}
 		}
 	}
+  /*collect solution*/
+	MPI_Gather(x_local,n_local,MPI_DOUBLE,x,n_local,MPI_DOUBLE,MASTER,MPI_COMM_WORLD);
 	if(rank==MASTER){
-		fprintf(stderr, "\n     ---> Finished in %.1fs and %d iterations\n", wtime() - start, iter);
+		fprintf(stderr, "\n   ----> Finished in %.1fs and %d_local iterations\n", wtime() - start, iter);
 	}
 }
 
@@ -497,11 +490,12 @@ int main(int argc, char **argv)
 	MPI_Init(&argc, &argv);
 	MPI_Comm_size(MPI_COMM_WORLD, &nproc);
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-	struct csr_matrix_t *A;
-	double *x 	/* solution vector */ ,*b,	/* right-hand side */
-	*scratch;	/* workspace for cg_solve() */
+	struct csr_matrix_t *A=NULL,*A_local=NULL;
+	double *b_local/*right-hand side local*/,
+	 *x={0}	/* solution vector */ ,*b={0},	/* right-hand side */
+	*scratch=NULL;	/* workspace for cg_solve() */
 	/* Parse command-line options */
-	int nrow,safety_check=0,n=0,nA=0;
+	int safety_check=0,n=0;
 	char *solution_filename;
 	if(rank==MASTER){
 		long long seed = 0;
@@ -543,15 +537,13 @@ int main(int argc, char **argv)
 
 		/* Allocate memory */
 		n = A->n;
-		nA=n;
 		double *mem = malloc(7 * n * sizeof(double));
 		if (mem == NULL)
 			err(1, "cannot allocate dense vectors");
-					  //x = mem;	/* solution vector */
-						b =(double *)malloc(sizeof(double) * n);
+		x = mem;	/* solution vector */
+		b = mem + n;	/* right-hand side */
+		scratch = mem + 2 * n;	/* workspace for cg_solve() */
 
-						// mem + n;	/* right-hand side */
-						scratch = mem + 2 * n;	/* workspace for cg_solve() */
 		/* Prepare right-hand size */
 		if (rhs_filename) {	/* load from file */
 			FILE *f_b = fopen(rhs_filename, "r");
@@ -567,17 +559,46 @@ int main(int argc, char **argv)
 			for (int i = 0; i < n; i++)
 				b[i] = PRF(i, seed);
 		}
+
 }
-	/* solve values == b */
-	struct csr_matrix_t *A_local = malloc(sizeof(*A_local));
+
+	/* Allocate memory for each proc */
+	A_local = malloc(sizeof(*A_local));
 
   /*distribute the matrix between the processes*/
-	distribMatrix(A,A_local,&nrow,rank,nproc);
-	double *b_local=(double *)malloc(sizeof(double) * A_local->n);
-  printf("rank %d et n:%d\n",rank,nrow);
-	//distribB(b,b_local,n,A_local->n,rank,nproc);
+	distribMatrix(A,A_local,&n,rank,nproc);
+	b_local=(double *)malloc(sizeof(double) * A_local->n);
 
 
+	/*distribute the vector b between the processes*/
+	distribVector(b,b_local,n,A_local->n,rank,nproc);
+
+	/* solve values Ax=b */
+	cg_solve(A_local,b_local,x,THRESHOLD,n,rank);
+	if(rank==MASTER){
+		printf("SOLUTION: x[0]=%f, x[F]=%f\n",x[0],x[n-1]);
+	}
+	/*if(rank==MASTER){
+	/* Check result
+	if (safety_check) {
+		double *y = scratch;
+		sp_gemv(A, x, y);	// y = Ax
+		for (int i = 0; i < n; i++)	// y = Ax - b
+			y[i] -= b[i];
+		//fprintf(stderr, "[check] max error = %2.2e\n", norm(n, y));
+	}
+
+	/* Dump the solution vector */
+	/*FILE *f_x = stdout;
+	if (solution_filename != NULL) {
+		f_x = fopen(solution_filename, "w");
+		if (f_x == NULL)
+			err(1, "cannot open solution file %s", solution_filename);
+		fprintf(stderr, "[IO] writing solution to %s\n", solution_filename);
+	}
+	for (int i = 0; i < n; i++)
+		fprintf(f_x, "%a\n", x[i]);
+	}*/
 
 	MPI_Finalize();
 	return EXIT_SUCCESS;
