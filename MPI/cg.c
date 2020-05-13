@@ -195,7 +195,7 @@ void distribVector(double *b,double *b_local,int nrow,int n_local,int rank,int n
 		n_loc = ceil((double)nrow/ nproc); //partial vector size for each
 		n_loc_last = nrow - (nproc-1)*n_loc;    //vector size for last process
 
-		if (n_loc_last < 1 || n_loc_last==nrow) { //Error case
+		if (nrow%nproc!=0) { //Error case n_loc_last < 1 || n_loc_last==nrow
 			printf("Invalid num processors, exiting..\n");
 			exit(0);
 		}
@@ -222,7 +222,7 @@ void distribMatrix(const struct csr_matrix_t *A,struct csr_matrix_t *A_local,int
 		n_local = ceil((double)*nrow/ nproc); //partial vector size for each
 		n_local_last = *nrow - (nproc-1)*n_local;    //vector size for last process
 
-		if (n_local_last < 1 || n_local_last==*nrow) { //Error case
+		if (*nrow%nproc!=0) { //Error case
 			printf("Invalid num processors, exiting..\n");
 			exit(0);
 		}
