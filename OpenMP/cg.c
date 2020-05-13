@@ -27,6 +27,8 @@
 #include <math.h>
 #include <getopt.h>
 #include <sys/time.h>
+#include <omp.h>
+
 
 #include "mmio.h"
 
@@ -35,9 +37,9 @@
 struct csr_matrix_t {
 	int n;			// dimension
 	int nz;			// number of non-zero entries
-	int *Ap;		// row pointers
-	int *Aj;		// column indices
-	double *Ax;		// actual coefficient
+	int *ptr;		// row pointers
+	int *colIndex;		// column indices
+	double *values;		// actual coefficient
 };
 
 /*************************** Utility functions ********************************/
@@ -125,10 +127,10 @@ struct csr_matrix_t *load_mm(FILE * f)
 	if (A == NULL)
 		err(1, "malloc failed");
 	int *w = malloc((n + 1) * sizeof(*w));
-	int *Ap = malloc((n + 1) * sizeof(*Ap));
-	int *Aj = malloc(2 * nnz * sizeof(*Ap));
-	double *Ax = malloc(2 * nnz * sizeof(*Ax));
-	if (w == NULL || Ap == NULL || Aj == NULL || Ax == NULL)
+	int *ptr = malloc((n + 1) * sizeof(*ptr));
+	int *colIndex = malloc(2 * nnz * sizeof(*ptr));
+	double *values = malloc(2 * nnz * sizeof(*values));
+	if (w == NULL || ptr == NULL || colIndex == NULL || values == NULL)
 		err(1, "Cannot allocate (CSR) sparse matrix");
 
 	/* the following is essentially a bucket sort */
@@ -147,23 +149,23 @@ struct csr_matrix_t *load_mm(FILE * f)
 	/* Compute row pointers (prefix-sum) */
 	int sum = 0;
 	for (int i = 0; i < n; i++) {
-		Ap[i] = sum;
+		ptr[i] = sum;
 		sum += w[i];
-		w[i] = Ap[i];
+		w[i] = ptr[i];
 	}
-	Ap[n] = sum;
+	ptr[n] = sum;
 
 	/* Dispatch entries in the right rows */
 	for (int u = 0; u < nnz; u++) {
 		int i = Ti[u];
 		int j = Tj[u];
 		double x = Tx[u];
-		Aj[w[i]] = j;
-		Ax[w[i]] = x;
+		colIndex[w[i]] = j;
+		values[w[i]] = x;
 		w[i]++;
 		if (i != j) {	/* off-diagonal entries are duplicated */
-			Aj[w[j]] = i;
-			Ax[w[j]] = x;
+			colIndex[w[j]] = i;
+			values[w[j]] = x;
 			w[j]++;
 		}
 	}
@@ -179,9 +181,9 @@ struct csr_matrix_t *load_mm(FILE * f)
 
 	A->n = n;
 	A->nz = sum;
-	A->Ap = Ap;
-	A->Aj = Aj;
-	A->Ax = Ax;
+	A->ptr = ptr;
+	A->colIndex = colIndex;
+	A->values = values;
 	return A;
 }
 
@@ -191,29 +193,31 @@ struct csr_matrix_t *load_mm(FILE * f)
 void extract_diagonal(const struct csr_matrix_t *A, double *d)
 {
 	int n = A->n;
-	int *Ap = A->Ap;
-	int *Aj = A->Aj;
-	double *Ax = A->Ax;
+	int *ptr = A->ptr;
+	int *colIndex = A->colIndex;
+	double *values = A->values;
+	#pragma omp parallel for shared(d)
 	for (int i = 0; i < n; i++) {
 		d[i] = 0.0;
-		for (int u = Ap[i]; u < Ap[i + 1]; u++)
-			if (i == Aj[u])
-				d[i] += Ax[u];
+		for (int u = ptr[i]; u < ptr[i + 1]; u++)
+			if (i == colIndex[u])
+				d[i] += values[u];
 	}
 }
 
-/* Matrix-vector product (with A in CSR format) : y = Ax */
+/* Matrix-vector product (with A in CSR format) : y = values */
 void sp_gemv(const struct csr_matrix_t *A, const double *x, double *y)
 {
 	int n = A->n;
-	int *Ap = A->Ap;
-	int *Aj = A->Aj;
-	double *Ax = A->Ax;
+	int *ptr = A->ptr;
+	int *colIndex = A->colIndex;
+	double *values = A->values;
+  #pragma omp parallel for shared(y)
 	for (int i = 0; i < n; i++) {
 		y[i] = 0;
-		for (int u = Ap[i]; u < Ap[i + 1]; u++) {
-			int j = Aj[u];
-			double A_ij = Ax[u];
+		for (int u = ptr[i]; u < ptr[i + 1]; u++) {
+			int j = colIndex[u];
+			double A_ij = values[u];
 			y[i] += A_ij * x[j];
 		}
 	}
@@ -225,7 +229,7 @@ void sp_gemv(const struct csr_matrix_t *A, const double *x, double *y)
 double dot(const int n, const double *x, const double *y)
 {
 	double sum = 0.0;
-#pragma omp parallel for
+	#pragma omp parallel for ordered reduction(+:sum)
 	for (int i = 0; i < n; i++)
 		sum += x[i] * y[i];
 	return sum;
@@ -239,20 +243,20 @@ double norm(const int n, const double *x)
 
 /*********************** conjugate gradient algorithm *************************/
 
-/* Solve Ax == b (the solution is written in x). Scratch must be preallocated of size 6n */
+/* Solve values == b (the solution is written in x). Scratch must be preallocated of size 6n */
 void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const double epsilon, double *scratch)
 {
 	int n = A->n;
 	int nz = A->nz;
 
-	fprintf(stderr, "[CG] Starting iterative solver\n");
-	fprintf(stderr, "     ---> Working set : %.1fMbyte\n", 1e-6 * (12.0 * nz + 52.0 * n));
-	fprintf(stderr, "     ---> Per iteration: %.2g FLOP in sp_gemv() and %.2g FLOP in the rest\n", 2. * nz, 12. * n);
+	//fprintf(stderr, "[CG] Starting iterative solver\n");
+	//fprintf(stderr, "     ---> Working set : %.1fMbyte\n", 1e-6 * (12.0 * nz + 52.0 * n));
+	//fprintf(stderr, "     ---> Per iteration: %.2g FLOP in sp_gemv() and %.2g FLOP in the rest\n", 2. * nz, 12. * n);
 
 	double *r = scratch;	        // residue
 	double *z = scratch + n;	// preconditioned-residue
 	double *p = scratch + 2 * n;	// search direction
-	double *q = scratch + 3 * n;	// q == Ap
+	double *q = scratch + 3 * n;	// q == ptr
 	double *d = scratch + 4 * n;	// diagonal entries of A (Jacobi preconditioning)
 
 	/* Isolate diagonal */
@@ -265,19 +269,15 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 	 */
 
 	/* We use x == 0 --- this avoids the first matrix-vector product. */
-#pragma omp parallel for
-	for (int i = 0; i < n; i++)
+	#pragma omp parallel for
+	for (int i = 0; i < n; i++){
 		x[i] = 0.0;
-
-#pragma omp parallel for
-	for (int i = 0; i < n; i++)	// r <-- b - Ax == b
-		r[i] = b[i];
-
-#pragma omp parallel for
+		r[i] = b[i];// r <-- b - values == b
+	}
+	#pragma omp parallel for
 	for (int i = 0; i < n; i++)	// z <-- M^(-1).r
 		z[i] = r[i] / d[i];
-
-#pragma omp parallel for
+	#pragma omp parallel for
 	for (int i = 0; i < n; i++)	// p <-- z
 		p[i] = z[i];
 
@@ -290,38 +290,31 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 		double old_rz = rz;
 		sp_gemv(A, p, q);	/* q <-- A.p */
 		double alpha = old_rz / dot(n, p, q);
-
-	#pragma omp parallel for
-		for (int i = 0; i < n; i++)	// x <-- x + alpha*p
-			x[i] += alpha * p[i];
-
-	#pragma omp parallel for
-		for (int i = 0; i < n; i++)	// r <-- r - alpha*q
-			r[i] -= alpha * q[i];
-
-	#pragma omp parallel for
+		#pragma omp parallel for
+		for (int i = 0; i < n; i++){
+			x[i] += alpha * p[i];// x <-- x + alpha*p
+			r[i] -= alpha * q[i];// r <-- r - alpha*q
+		}
+		#pragma omp parallel for
 		for (int i = 0; i < n; i++)	// z <-- M^(-1).r
 			z[i] = r[i] / d[i];
-
 		rz = dot(n, r, z);	// restore invariant
 		double beta = rz / old_rz;
-
-	#pragma omp parallel for
+		#pragma omp parallel for
 		for (int i = 0; i < n; i++)	// p <-- z + beta*p
 			p[i] = z[i] + beta * p[i];
-
 		iter++;
 		double t = wtime();
 		if (t - last_display > 0.5) {
 			/* verbosity */
 			double rate = iter / (t - start);	// iterations per s.
 			double GFLOPs = 1e-9 * rate * (2 * nz + 12 * n);
-			fprintf(stderr, "\r     ---> error : %2.2e, iter : %d (%.1f it/s, %.2f GFLOPs)", norm(n, r), iter, rate, GFLOPs);
+			//fprintf(stderr, "\r     ---> error : %2.2e, iter : %d (%.1f it/s, %.2f GFLOPs)", norm(n, r), iter, rate, GFLOPs);
 			fflush(stdout);
 			last_display = t;
 		}
 	}
-	fprintf(stderr, "\n     ---> Finished in %.1fs and %d iterations\n", wtime() - start, iter);
+	//fprintf(stderr, "\n     ---> Finished in %.1fs and %d iterations\n", wtime() - start, iter);
 }
 
 /******************************* main program *********************************/
@@ -390,27 +383,30 @@ int main(int argc, char **argv)
 		FILE *f_b = fopen(rhs_filename, "r");
 		if (f_b == NULL)
 			err(1, "cannot open %s", rhs_filename);
-		fprintf(stderr, "[IO] Loading b from %s\n", rhs_filename);
+		//fprintf(stderr, "[IO] Loading b from %s\n", rhs_filename);
 		for (int i = 0; i < n; i++) {
 			if (1 != fscanf(f_b, "%lg\n", &b[i]))
 				errx(1, "parse error entry %d\n", i);
 		}
 		fclose(f_b);
 	} else {
+		#pragma omp parallel for
 		for (int i = 0; i < n; i++)
 			b[i] = PRF(i, seed);
 	}
 
-	/* solve Ax == b */
+	/* solve values == b */
 	cg_solve(A, b, x, THRESHOLD, scratch);
+	//printf("SOLUTION: x[0]=%f, x[F]=%f\n",x[0],x[n-1]);
 
 	/* Check result */
 	if (safety_check) {
 		double *y = scratch;
-		sp_gemv(A, x, y);	// y = Ax
-		for (int i = 0; i < n; i++)	// y = Ax - b
+		sp_gemv(A, x, y);	// y = values
+		#pragma omp parallel for
+		for (int i = 0; i < n; i++)	// y = values - b
 			y[i] -= b[i];
-		fprintf(stderr, "[check] max error = %2.2e\n", norm(n, y));
+		//fprintf(stderr, "[check] max error = %2.2e\n", norm(n, y));
 	}
 
 	/* Dump the solution vector */
@@ -421,6 +417,7 @@ int main(int argc, char **argv)
 			err(1, "cannot open solution file %s", solution_filename);
 		fprintf(stderr, "[IO] writing solution to %s\n", solution_filename);
 	}
+	#pragma omp parallel for
 	for (int i = 0; i < n; i++)
 		fprintf(f_x, "%a\n", x[i]);
 	return EXIT_SUCCESS;

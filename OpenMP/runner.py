@@ -18,7 +18,7 @@ params['proof'] = 0x65dec1542f679f51
 # Paramètres du calcul (à adapter)
 #/Infos/lmd/2019/master/ue/MU4IN903-2020fev
 #G3_circuit.mtx
-params['matrix'] = "G3_circuit"
+params['matrix'] = "cfd1"
 params['users'] = ["Boubacar Diallo"]
 
 # Description du code exécuté
