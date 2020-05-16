@@ -186,20 +186,17 @@ struct csr_matrix_t *load_mm(FILE * f)
 	return A;
 }
 
-/*************************** Matrix  and vector distrib *********************************/
-/*Distrib vector between processes */
-void distribVector(double *b,double *b_local,int nrow,int n_local,int rank,int nproc){
-	int n_loc,ptr_count[nproc], ptr_displs[nproc];
-	if(rank==MASTER){
-		int n_loc_last;
+/*************************** Matrix distrib *********************************/
+/*Vector size and displacement for each processor */
+void get_disp(int *ptr_count,int *ptr_displs,int rank,int nproc,int nrow){
+ if(rank==MASTER){
+		int n_loc_last,n_loc;
 		n_loc = ceil((double)nrow/ nproc); //partial vector size for each
 		n_loc_last = nrow - (nproc-1)*n_loc;    //vector size for last process
-
-		if (nrow%nproc!=0) { //Error case n_loc_last < 1 || n_loc_last==nrow
-			printf("Invalid num processors, exiting..\n");
+		if (n_loc_last < 1 || n_loc_last==nrow) {
+			printf("Invalid number processors, exiting..\n");
 			exit(0);
 		}
-		// Vector size and displacement for each processor
 		for (int p = 0; p < nproc-1; p++) {
 			ptr_count[p] = n_loc;
 			ptr_displs[p] = p*n_loc;
@@ -207,62 +204,39 @@ void distribVector(double *b,double *b_local,int nrow,int n_local,int rank,int n
 		ptr_count[nproc-1] = n_loc_last;
 		ptr_displs[nproc-1] =(nproc-1)*n_loc;
 	}
-	MPI_Scatterv(b,ptr_count,ptr_displs,MPI_DOUBLE,b_local,n_local,MPI_DOUBLE,MASTER,MPI_COMM_WORLD);
+	MPI_Bcast(ptr_count,nproc,MPI_INT,MASTER,MPI_COMM_WORLD);
+	MPI_Bcast(ptr_displs,nproc,MPI_INT,MASTER,MPI_COMM_WORLD);
 }
 /*distrib the matrix between the processes*/
-void distribMatrix(const struct csr_matrix_t *A,struct csr_matrix_t *A_local,int *nrow,int rank,int nproc){
+void distribMatrix(const struct csr_matrix_t *A,struct csr_matrix_t *A_local,int *nrow,int rank,int nproc,int *ptr_count,int *ptr_displs){
 	int nz_local,n_local;
 	int *colIndex_local,*ptr_local;
 	double *values_local;
-	int ptr_count[nproc], ptr_displs[nproc];
-
 	if(rank==MASTER){
-		int n_local_last;
+		int values_count[nproc],values_displs[nproc];
 		*nrow=A->n;
 		n_local = ceil((double)*nrow/ nproc); //partial vector size for each
-		n_local_last = *nrow - (nproc-1)*n_local;    //vector size for last process
-
-		if (*nrow%nproc!=0) { //Error case
-			printf("Invalid num processors, exiting..\n");
-			exit(0);
-		}
-		// Vector size and displacement for each processor
-		for (int p = 0; p < nproc-1; p++) {
-			ptr_count[p] = n_local;
-			ptr_displs[p] = p*n_local;
-		}
-		ptr_count[nproc-1] = n_local_last;
-		ptr_displs[nproc-1] =(nproc-1)*n_local;
-		int values_count[nproc];
-		int values_displs[nproc];
 		for (int p = 0; p < nproc; p++) {
 			values_count[p] = A->ptr[p*n_local+ptr_count[p]]-A->ptr[p*n_local];
-			values_displs[p] = A->ptr[ptr_displs[p]];
+			values_displs[p] = A->ptr[p*n_local];
 		}
-		//master send nrow
+		/*master send nz,nrow,ptr,colIndex for each processes*/
 		MPI_Bcast(nrow,1,MPI_INT,MASTER,MPI_COMM_WORLD);
-		//master send nz for each proc
-		MPI_Scatter(values_count,1,MPI_INT,MPI_IN_PLACE,1,MPI_INT,MASTER,MPI_COMM_WORLD);
-		//master send ptr
-		MPI_Scatterv(A->ptr,ptr_count,ptr_displs,MPI_INT,MPI_IN_PLACE,0,MPI_INT,MASTER,MPI_COMM_WORLD);
-		//send values
-		MPI_Scatterv(A->values,values_count,values_displs,MPI_DOUBLE,MPI_IN_PLACE,0,MPI_DOUBLE,MASTER,MPI_COMM_WORLD);
-		//send colIndex
-		MPI_Scatterv(A->colIndex,values_count,values_displs,MPI_INT,MPI_IN_PLACE,0,MPI_INT,MASTER,MPI_COMM_WORLD);
-		nz_local=values_count[0];
+		//nz
+		MPI_Scatter(values_count,1,MPI_INT,&nz_local,1,MPI_INT,MASTER,MPI_COMM_WORLD);
+    //ptr
 		ptr_local= (int *)malloc(sizeof(int) *(n_local+1));
-		values_local = (double *)malloc(sizeof(double) * nz_local);
-		colIndex_local = (int *)malloc(sizeof(int) * nz_local);
-		for(int i=0;i<n_local;i++){
-			ptr_local[i]=A->ptr[i];
-		}
+		MPI_Scatterv(A->ptr,ptr_count,ptr_displs,MPI_INT,ptr_local,n_local,MPI_INT,MASTER,MPI_COMM_WORLD);
 		ptr_local[n_local]=nz_local;
-		for(int i=0;i<nz_local;i++){
-			values_local[i]=A->values[i];
-			colIndex_local[i]=A->colIndex[i];
-		}
+    //values
+		values_local = (double *)malloc(sizeof(double) * nz_local);
+		MPI_Scatterv(A->values,values_count,values_displs,MPI_DOUBLE,values_local,nz_local,MPI_DOUBLE,MASTER,MPI_COMM_WORLD);
+		//colIndex
+		colIndex_local = (int *)malloc(sizeof(int) * nz_local);
+		MPI_Scatterv(A->colIndex,values_count,values_displs,MPI_INT,colIndex_local,nz_local,MPI_INT,MASTER,MPI_COMM_WORLD);
+
 	}else{
-		//receive nrow since master
+		/*slave receive nz,nrow,ptr,colIndex  since master*/
 		MPI_Bcast(nrow,1,MPI_INT,MASTER,MPI_COMM_WORLD);
 		n_local = ceil((double)*nrow/ nproc);
 		if(rank==nproc-1){n_local=*nrow - (nproc-1)*n_local;}
@@ -272,14 +246,25 @@ void distribMatrix(const struct csr_matrix_t *A,struct csr_matrix_t *A_local,int
 		ptr_local= (int *)malloc(sizeof(int) *(n_local+1));
 		MPI_Scatterv(MPI_IN_PLACE,0,MPI_IN_PLACE,MPI_INT,ptr_local,n_local,MPI_INT,MASTER,MPI_COMM_WORLD);
 		ptr_local[n_local]=nz_local;
+		//printf("ptr[13]=%d\n", nz_local);
+
 		//receive values
 		values_local = (double *)malloc(sizeof(double) * nz_local);
 		MPI_Scatterv(MPI_IN_PLACE,0,MPI_IN_PLACE,MPI_DOUBLE,values_local,nz_local,MPI_DOUBLE,MASTER,MPI_COMM_WORLD);
 		//receive colIndex
 		colIndex_local = (int *)malloc(sizeof(int) * nz_local);
 		MPI_Scatterv(MPI_IN_PLACE,0,MPI_IN_PLACE,MPI_INT,colIndex_local,nz_local,MPI_INT,MASTER,MPI_COMM_WORLD);
-	}
 
+		//normalize ptr
+		int  prec=ptr_local[0];
+		int tmp=0;
+		ptr_local[0]=0;
+		for(int i=1;i<n_local;i++){
+			tmp+=ptr_local[i]-prec;
+			prec=ptr_local[i];
+			ptr_local[i]=tmp;
+		}
+	}
 	//build matrix for each proc
 	A_local->n = n_local;
 	A_local->nz = nz_local;
@@ -287,84 +272,55 @@ void distribMatrix(const struct csr_matrix_t *A,struct csr_matrix_t *A_local,int
 	A_local->colIndex = colIndex_local;
 	A_local->values = values_local;
 
+
 }
 
 /*************************** Matrix accessors *********************************/
 /* Copy the diagonal of A into the vector d. */
-void extract_diagonal(const struct csr_matrix_t *A, double *d,int rank)
+void extract_diagonal(const struct csr_matrix_t *A, double *d,int nrow,int rank,int nproc)
 {
 	int n = A->n;
 	int *ptr = A->ptr;
 	int *colIndex = A->colIndex;
 	double *values = A->values;
-	if(ptr[0]!=0){
-		int ecart,tmp=0;
-		int prec=ptr[0];
-		ptr[0]=0;
-		ecart=ptr[1]-prec;
-		tmp=tmp+ecart;
-		prec=ptr[1];
-		ptr[1]=tmp;
+	if(nrow%nproc!=0 && rank==nproc-1){
+		int deb=nrow-n;
 		for (int i = 0; i < n; i++) {
 			d[i] = 0.0;
-			if(i>0 && i+1<n){
-				ecart=ptr[i+1]-prec;
-				tmp=tmp+ecart;
-				prec=ptr[i+1];
-				ptr[i+1]=tmp;
-			}
-			for (int u = ptr[i]; u < ptr[i + 1]; u++)
-				if (rank*n+i == colIndex[u])
+			for (int u = ptr[i]; u < ptr[i + 1]; u++){
+			if (deb+i == colIndex[u]){
 					d[i] += values[u];
+
+				}
+			}
 		}
 	}else{
 		for (int i = 0; i < n; i++) {
-			d[i] = 0.0;
-			for (int u = ptr[i]; u < ptr[i + 1]; u++)
-				if (i == colIndex[u])
-					d[i] += values[u];
-		}
+				d[i] = 0.0;
+				for (int u = ptr[i]; u < ptr[i + 1]; u++)
+				if (rank*n+i == colIndex[u])
+						d[i] += values[u];
+			}
 	}
+
 }
 /* Matrix-vector product (with A in CSR format) : y = values */
+
 void sp_gemv(const struct csr_matrix_t *A, const double *x, double *y)
 {
 	int n = A->n;
 	int *ptr = A->ptr;
 	int *colIndex = A->colIndex;
 	double *values = A->values;
-	if(ptr[0]!=0){
-		int ecart,tmp=0;
-		int prec=ptr[0];
-		ptr[0]=0;
-		ecart=ptr[1]-prec;
-		tmp=tmp+ecart;
-		prec=ptr[1];
-		ptr[1]=tmp;
-		for (int i = 0; i < n; i++) {
+	for (int i = 0; i < n; i++) {
 			y[i] = 0;
-			if(i>0 && i+1<n){
-				ecart=ptr[i+1]-prec;
-				tmp=tmp+ecart;
-				prec=ptr[i+1];
-				ptr[i+1]=tmp;
-			}
-			for (int u = ptr[i]; u < ptr[i + 1]; u++) {
+			for (int u = ptr[i]; u < ptr[i + 1]; u++){
 				int j = colIndex[u];
 				double A_ij = values[u];
 				y[i] += A_ij * x[j];
 			}
-		}
-	}else{
-		for (int i = 0; i < n; i++) {
-			y[i] = 0;
-			for (int u = ptr[i]; u < ptr[i + 1]; u++) {
-				int j = colIndex[u];
-				double A_ij = values[u];
-				y[i] += A_ij * x[j];
-			}
-		}
 	}
+
 }
 
 /*************************** Vector operations ********************************/
@@ -390,14 +346,14 @@ double norm(const int n, const double *x)
 /*********************** conjugate gradient algorithm *************************/
 
 /* Solve values == b (the solution is written in x). Scratch must be preallocated of size 6n */
-void cg_solve(const struct csr_matrix_t *A_local, const double *b_local, double *x, const double epsilon,int nrow,int rank)
+void cg_solve(const struct csr_matrix_t *A_local, const double *b_local, double *x, const double epsilon,int nrow,int rank,int nproc,int * ptr_count,int *ptr_displs)
 {
 	int n_local = A_local->n;
 	int nz_local = A_local->nz;
   if(rank==MASTER){
 		fprintf(stderr, "[CG] Starting iterative solver\n");
 		fprintf(stderr, "     ---> Working set : %.1fMbyte\n", 1e-6 * (12.0 * nz_local + 52.0 * n_local));
-		fprintf(stderr, "     ---> Per iteration: %.2g FLOP in sp_gemv() and %.2g FLOP in the rest\n_local", 2. * nz_local, 12. * n_local);
+		fprintf(stderr, "     ---> Per iteration: %.2g FLOP in sp_gemv() and %.2g FLOP in the rest\n", 2. * nz_local, 12. * n_local);
 	}
 	double *r_local = malloc(n_local * sizeof(double));	        // residue
 	double *z_local =malloc(n_local * sizeof(double));// scratch + n_local;	// preconditioned-residue
@@ -407,10 +363,8 @@ void cg_solve(const struct csr_matrix_t *A_local, const double *b_local, double 
 	double *full_p = malloc(nrow * sizeof(double));//full vector
 	double *x_local = malloc(n_local * sizeof(double));//local solution
 
-
 	/* Isolate diagonal */
-	extract_diagonal(A_local, d_local,rank);
-
+	extract_diagonal(A_local, d_local,nrow,rank,nproc);
 
 	/*
 	 * This function follows closely the pseudo-code given in the (english)
@@ -419,36 +373,35 @@ void cg_solve(const struct csr_matrix_t *A_local, const double *b_local, double 
 	 */
 
 	/* We use x_local == 0 --- this avoids the first matrix-vector product. */
-	for (int i = 0; i < n_local; i++)
+	for (int i = 0; i < n_local; i++){
 		x_local[i] = 0.0;
-	for (int i = 0; i < n_local; i++)	// r_local <-- b_local - values == b_local
 		r_local[i] = b_local[i];
+	}
 	for (int i = 0; i < n_local; i++)	// z_local <-- M^(-1).r_local
 		z_local[i] = r_local[i] / d_local[i];
 	for (int i = 0; i < n_local; i++)	// p_local <-- z_local
 		p_local[i] = z_local[i];
 
 	double rz = dot(n_local, r_local, z_local);
-
 	double start = wtime();
 	double last_display = start;
 	int iter = 0;
 	while (norm(n_local, r_local) > epsilon) {
 		/* loop invariant : rz = dot(r_local, z_local) */
 		double old_rz = rz;
-		MPI_Allgather(p_local, n_local, MPI_DOUBLE, full_p, n_local, MPI_DOUBLE, MPI_COMM_WORLD);
+		MPI_Allgatherv(p_local, n_local, MPI_DOUBLE, full_p,ptr_count,ptr_displs, MPI_DOUBLE, MPI_COMM_WORLD);
 		sp_gemv(A_local, full_p, q);	/* q <-- A_local.p_local */
 		double alpha = old_rz / dot(n_local, p_local, q);
 		for (int i = 0; i < n_local; i++)	// x_local <-- x_local + alpha*p_local
+		{
 			x_local[i] += alpha * p_local[i];
-		for (int i = 0; i < n_local; i++)	// r_local <-- r_local - alpha*q
 			r_local[i] -= alpha * q[i];
+		}
 		for (int i = 0; i < n_local; i++)	// z_local <-- M^(-1).r_local
 			z_local[i] = r_local[i] / d_local[i];
 		rz = dot(n_local, r_local, z_local);	// restore invariant
 		double beta = rz / old_rz;
 		for (int i = 0; i < n_local; i++)	// p_local <-- z_local + beta*p_local   /* p_local = r_local + beta.p_local */
-
 			p_local[i] = z_local[i] + beta * p_local[i];
 		iter++;
 		if(rank==MASTER){
@@ -457,17 +410,20 @@ void cg_solve(const struct csr_matrix_t *A_local, const double *b_local, double 
 				/* verbosity */
 				double rate = iter / (t - start);	// iterations per s.
 				double GFLOPs = 1e-9 * rate * (2 * nz_local + 12 * n_local);
-				fprintf(stderr, "\r    MASTER-->iter : %d (%.1f it/s, %.2f GFLOPs)",iter, rate, GFLOPs);
+				fprintf(stderr, "\r     MASTER-->iter : %d (%.1f it/s, %.2f GFLOPs)",iter, rate, GFLOPs);
 				fflush(stdout);
 				last_display = t;
 			}
 		}
 	}
   /*collect solution*/
-	MPI_Gather(x_local,n_local,MPI_DOUBLE,x,n_local,MPI_DOUBLE,MASTER,MPI_COMM_WORLD);
+	MPI_Gatherv(x_local,n_local,MPI_DOUBLE,x,ptr_count,ptr_displs,MPI_DOUBLE,MASTER,MPI_COMM_WORLD);
+	free(r_local);free(z_local);free(p_local);free(q);
+	free(d_local);free(full_p);free(x_local);
 	if(rank==MASTER){
-		fprintf(stderr, "\n   ----> Finished in %.1fs and %d_local iterations\n", wtime() - start, iter);
+		fprintf(stderr, "\n   ----> Finished in %.1fs and %d  iterations\n", wtime() - start, iter);
 	}
+
 }
 
 /******************************* main program *********************************/
@@ -491,6 +447,8 @@ int main(int argc, char **argv)
 	MPI_Comm_size(MPI_COMM_WORLD, &nproc);
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 	struct csr_matrix_t *A=NULL,*A_local=NULL;
+	int ptr_count[nproc],ptr_displs[nproc];
+
 	double *b_local/*right-hand side local*/,
 	 *x={0}	/* solution vector */ ,*b={0},	/* right-hand side */
 	*scratch=NULL;	/* workspace for cg_solve() */
@@ -561,33 +519,24 @@ int main(int argc, char **argv)
 		}
 
 }
+/*Vector size and displacement for each processor */
+	get_disp(ptr_count,ptr_displs,rank,nproc,n);
 
-	/* Allocate memory for each proc */
+	/* Allocate A_local memory for each proc */
 	A_local = malloc(sizeof(*A_local));
 
   /*distribute the matrix between the processes*/
-	distribMatrix(A,A_local,&n,rank,nproc);
-	b_local=(double *)malloc(sizeof(double) * A_local->n);
-
+	distribMatrix(A,A_local,&n,rank,nproc,ptr_count,ptr_displs);
 
 	/*distribute the vector b between the processes*/
-	distribVector(b,b_local,n,A_local->n,rank,nproc);
+	b_local=(double *)malloc(sizeof(double) * A_local->n);
+	MPI_Scatterv(b,ptr_count,ptr_displs,MPI_DOUBLE,b_local,A_local->n,MPI_DOUBLE,MASTER,MPI_COMM_WORLD);
 
 	/* solve values Ax=b */
-	cg_solve(A_local,b_local,x,THRESHOLD,n,rank);
-	if(rank==MASTER){
-		printf("SOLUTION: x[0]=%f, x[F]=%f\n",x[0],x[n-1]);
-	}
-	/*if(rank==MASTER){
-	/* Check result
-	if (safety_check) {
-		double *y = scratch;
-		sp_gemv(A, x, y);	// y = Ax
-		for (int i = 0; i < n; i++)	// y = Ax - b
-			y[i] -= b[i];
-		//fprintf(stderr, "[check] max error = %2.2e\n", norm(n, y));
-	}
+	//cg_solve(A_local,b_local,x,THRESHOLD,n,rank);
+	cg_solve(A_local,b_local,x,THRESHOLD,n,rank,nproc,ptr_count,ptr_displs);
 
+	if(rank==MASTER){
 	/* Dump the solution vector */
 	/*FILE *f_x = stdout;
 	if (solution_filename != NULL) {
@@ -598,7 +547,7 @@ int main(int argc, char **argv)
 	}
 	for (int i = 0; i < n; i++)
 		fprintf(f_x, "%a\n", x[i]);
-	}*/
+	}
 
 	MPI_Finalize();
 	return EXIT_SUCCESS;
