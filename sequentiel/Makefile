@@ -11,9 +11,8 @@ all: $(OBJ)
 cg.o: cg.c
 	$(CC) -c $(CFLAGS) $< $(LIB)
 
-mmio.o: mmio.c
-%.o: %.c
-	$(CC) -c $(CFLAGS) mmio.c cg.c $(LIB)
+mmio.o: ../lib/mmio.c ../lib/mmio.h
+	$(CC) -c $(CFLAGS) ../lib/mmio.c $(LIB)
 
 .PHONY: clean
 

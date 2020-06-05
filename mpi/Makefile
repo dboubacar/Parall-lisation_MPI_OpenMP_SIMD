@@ -8,13 +8,11 @@ MPI_C = mpicc
 all: $(OBJ)
 	$(MPI_C) $(CFLAGS)  $(OBJ) -o $(EXEC) $(LIB)
 
-
 cg.o: cg.c
 	$(MPI_C) -c $(CFLAGS) $< $(LIB)
 
-
-mmio.o: mmio.c
-	$(CC) -c $(CFLAGS) $< $(LIB)
+mmio.o: ../lib/mmio.c ../lib/mmio.h
+	$(CC) -c $(CFLAGS) ../lib/mmio.c $(LIB)
 
 .PHONY: clean
 

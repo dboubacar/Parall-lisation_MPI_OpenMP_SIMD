@@ -30,7 +30,7 @@
 #include <omp.h>
 
 
-#include "mmio.h"
+#include "../lib/mmio.h"
 
 #define THRESHOLD 1e-8		// maximum tolerance threshold
 

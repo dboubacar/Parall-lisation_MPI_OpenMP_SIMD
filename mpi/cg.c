@@ -29,7 +29,7 @@
 #include <getopt.h>
 #include <sys/time.h>
 
-#include "mmio.h"
+#include "../lib/mmio.h"
 
 #define THRESHOLD 1e-8		// maximum tolerance threshold
 #define MASTER 0
@@ -449,17 +449,15 @@ int main(int argc, char **argv)
 	int ptr_count[nproc],ptr_displs[nproc];
 
 	double *b_local/*right-hand side local*/,
-	 *x={0}	/* solution vector */ ,*b={0},	/* right-hand side */
-	*scratch=NULL;	/* workspace for cg_solve() */
+	 *x={0}	/* solution vector */ ,*b={0};	/* right-hand side */
+		/* workspace for cg_solve() */
 	/* Parse command-line options */
-	int safety_check=0,n=0;
-	char *solution_filename;
+	int n=0;
+	char *solution_filename=NULL;
 	if(rank==MASTER){
 		long long seed = 0;
 		char *rhs_filename = NULL;
 		char *matrix_filename = NULL;
-		solution_filename = NULL;
-		safety_check = 1;
 		char ch;
 		while ((ch = getopt_long(argc, argv, "", longopts, NULL)) != -1) {
 			switch (ch) {
@@ -475,9 +473,7 @@ int main(int argc, char **argv)
 			case 'o':
 				solution_filename = optarg;
 				break;
-			case 'c':
-				safety_check = 0;
-				break;
+
 			default:
 				errx(1, "Unknown option");
 			}
@@ -499,7 +495,7 @@ int main(int argc, char **argv)
 			err(1, "cannot allocate dense vectors");
 		x = mem;	/* solution vector */
 		b = mem + n;	/* right-hand side */
-		scratch = mem + 2 * n;	/* workspace for cg_solve() */
+			/* workspace for cg_solve() */
 
 		/* Prepare right-hand size */
 		if (rhs_filename) {	/* load from file */
@@ -534,6 +530,8 @@ int main(int argc, char **argv)
 	/* solve values Ax=b */
 	cg_solve(A_local,b_local,x,THRESHOLD,n,rank,nproc,ptr_count,ptr_displs);
 
+
+
 	if(rank==MASTER){
 	/* Dump the solution vector */
 	  FILE *f_x = stdout;
@@ -543,8 +541,8 @@ int main(int argc, char **argv)
 				err(1, "cannot open solution file %s", solution_filename);
 			  fprintf(stderr, "[IO] writing solution to %s\n", solution_filename);
 		}
-		for (int i = 0; i < n; i++)
-			fprintf(f_x, "%a\n", x[i]);
+		/* for (int i = 0; i < n; i++)
+			fprintf(f_x, "%a\n", x[i]);*/
 	}
 
 	MPI_Finalize();

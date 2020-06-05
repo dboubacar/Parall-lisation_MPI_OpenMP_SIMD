@@ -16,19 +16,17 @@ params['version'] = 3
 params['proof'] = 0x65dec1542f679f51
 
 # Paramètres du calcul (à adapter)
-#/Infos/lmd/2019/master/ue/MU4IN903-2020fev
-#G3_circuit.mtx
-params['matrix'] = "cfd1"
+params['matrix'] = "cfd2"
 params['users'] = ["Boubacar Diallo,Jeffrey-Chris Kebey"]
 
 # Description du code exécuté
-params['software'] = """Code OpenMPI"""
+params['software'] = """Code hybrid openMP-MPI"""
 
 # Description du matériel utilisé pour l'exécution
 params['nodes'] = 4   # nombre de noeuds
-params['cores'] = 8   # nombre total de coeurs
-params['hardware'] = """4 PCs de la Salle 327 (Esclangon).
-Machines de bureau DELL équipés de CPU Intel i3 à 2 coeurs, 3Ghz, et 4Go de RAM."""
+params['cores'] = 16   # nombre total de coeurs
+params['hardware'] = """4 PCs de la Salle 305 (PPTI)
+                        Machines de bureau DELL équipés de CPU Intel Corei7-6700 à 4 coeurs, 3.4Ghz, et 16Go de RAM."""
 
 # Comment exécuter le solveur :
 #   {matrix} sera remplacé par la valeur ci-dessus.
@@ -36,10 +34,14 @@ Machines de bureau DELL équipés de CPU Intel i3 à 2 coeurs, 3Ghz, et 4Go de R
 #   {cores}  sera remplacé par la valeur ci-dessus.
 #   {seed}   sera remplacé par la valeur fournie par le serveur.
 #   On peut ajouter toutes les options qu'on veut, utiliser mpiexec, etc.
-command_line = "./cg_omp --matrix {matrix}.mtx --seed {seed}"
-#command_line = "zcat {matrix}.mtx.gz | ./cg_omp --seed {seed}"
+#command_line = "./cg --matrix {matrix}.mtx --seed {seed}"
+#command_line = "zcat matrices/{matrix}.mtx.gz | ./cg --seed {seed}"
 #command_line = "mpiexec --n {cores} --hostfile nodes.txt --display-map ./cg --matrix {matrix}.mtx --seed {seed}"
-#command_line = "mpiexec --n {nodes} -hostfile nodes.txt --map-by ppr:1:node ./cg --matrix {matrix}.mtx --seed {seed}"
+command_line = "mpiexec --n {nodes} -hostfile host305 --map-by ppr:1:node ./mpi_omp --matrix {matrix}.mtx --seed {seed}"
+#command_line="mpirun -np  {nodes} ./mpi_omp --matrix {matrix}.mtx --seed {seed}"
+
+mpiexec --n {nodes} -hostfile host305 --map-by ppr:1:node ./mpi_omp --matrix {matrix}.mtx --seed {seed}"
+mpirun -np 4 ./mpi_omp --matrix  cfd2.mtx --seed 42 > /dev/null
 
 ######################### Main Program ###########################
 

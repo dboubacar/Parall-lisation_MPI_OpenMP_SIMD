@@ -1,4 +1,4 @@
-/* 
+/*
  * Sequential implementation of the Conjugate Gradient Method.
  *
  * Authors : Lilia Ziane Khodja & Charles Bouillaguet
@@ -8,8 +8,8 @@
  * CHANGE LOG:
  *    v1.01 : fix a minor printing bug in load_mm (incorrect CSR matrix size)
  *    v1.02 : use https instead of http in "PRO-TIP"
- *  
- * USAGE: 
+ *
+ * USAGE:
  * 	$ ./cg --matrix bcsstk13.mtx                # loading matrix from file
  *      $ ./cg --matrix bcsstk13.mtx > /dev/null    # ignoring solution
  *	$ ./cg < bcsstk13.mtx > /dev/null           # loading matrix from stdin
@@ -28,16 +28,16 @@
 #include <getopt.h>
 #include <sys/time.h>
 
-#include "mmio.h"
+#include "../lib/mmio.h"
 
 #define THRESHOLD 1e-8		// maximum tolerance threshold
 
 struct csr_matrix_t {
 	int n;			// dimension
 	int nz;			// number of non-zero entries
-	int *Ap;		// row pointers
+	int *Ap;		//ptr row pointers
 	int *Aj;		// column indices
-	double *Ax;		// actual coefficient
+	double *Ax;		//values; actual coefficient
 };
 
 /*************************** Utility functions ********************************/
@@ -109,7 +109,7 @@ struct csr_matrix_t *load_mm(FILE * f)
 		/*
 		 * Uncomment this to check input (but it slows reading)
 		 * if (i < 1 || i > n || j < 1 || j > i)
-		 *	errx(2, "invalid entry %d : %d %d\n", u, i, j); 
+		 *	errx(2, "invalid entry %d : %d %d\n", u, i, j);
 		 */
 		Tx[u] = x;
 	}
@@ -257,7 +257,7 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 	/* Isolate diagonal */
 	extract_diagonal(A, d);
 
-	/* 
+	/*
 	 * This function follows closely the pseudo-code given in the (english)
 	 * Wikipedia page "Conjugate gradient method". This is the version with
 	 * preconditionning.
