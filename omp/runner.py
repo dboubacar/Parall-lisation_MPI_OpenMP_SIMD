@@ -22,7 +22,7 @@ params['matrix'] = "cfd1"
 params['users'] = ["Boubacar Diallo,Jeffrey-Chris Kebey"]
 
 # Description du code exécuté
-params['software'] = """Code OpenMPI"""
+params['software'] = """Code OpenMP"""
 
 # Description du matériel utilisé pour l'exécution
 params['nodes'] = 4   # nombre de noeuds

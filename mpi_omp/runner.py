@@ -40,8 +40,7 @@ params['hardware'] = """4 PCs de la Salle 305 (PPTI)
 command_line = "mpiexec --n {nodes} -hostfile host305 --map-by ppr:1:node ./mpi_omp --matrix {matrix}.mtx --seed {seed}"
 #command_line="mpirun -np  {nodes} ./mpi_omp --matrix {matrix}.mtx --seed {seed}"
 
-mpiexec --n {nodes} -hostfile host305 --map-by ppr:1:node ./mpi_omp --matrix {matrix}.mtx --seed {seed}"
-mpirun -np 4 ./mpi_omp --matrix  cfd2.mtx --seed 42 > /dev/null
+
 
 ######################### Main Program ###########################
 

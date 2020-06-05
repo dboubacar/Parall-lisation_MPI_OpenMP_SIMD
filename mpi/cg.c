@@ -541,8 +541,8 @@ int main(int argc, char **argv)
 				err(1, "cannot open solution file %s", solution_filename);
 			  fprintf(stderr, "[IO] writing solution to %s\n", solution_filename);
 		}
-		/* for (int i = 0; i < n; i++)
-			fprintf(f_x, "%a\n", x[i]);*/
+	  for (int i = 0; i < n; i++)
+			fprintf(f_x, "%a\n", x[i]);
 	}
 
 	MPI_Finalize();
